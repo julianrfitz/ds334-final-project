@@ -1,0 +1,58 @@
+---
+title: "data-exploration"
+author: "Julian Fitz"
+format: 
+  html:
+    embed-resources: true
+---
+
+## data prep
+```{r}
+library(tidyverse)
+library(nhlscraper)  ## hockey data
+library(sportyR) ## visualize regualation playing surfaces for sports
+library(here)
+```
+
+```{r grab game data}
+## canucks April 1st upset of the Avs
+
+pbps <- gc_pbps(season = 20252026)
+
+pbps |> filter(typeDescKey == "goal")
+```
+
+```{r grab shot data}
+## shot data from moneypuck.com
+shots_df <- read_csv(here("data/shots_2025.csv"))
+shots_df |> select(awayTeamCode) |> unique()
+
+## moneypuck data for canucks april 1st upset against the avalanch
+avs_vs_canucks <- shots_df |> filter(awayTeamCode == "VAN") |> filter(homeTeamCode == "COL") |> filter(game_id == 21188)
+```
+
+```{r goal locations}
+avs_vs_canucks
+AvC_goal_df <- avs_vs_canucks |> filter(event == "GOAL")
+
+
+## need to color by scoring team
+geom_hockey("nhl") +
+  geom_point(data = avs_vs_canucks, aes(x = arenaAdjustedXCord, y = arenaAdjustedYCord)) +
+  geom_point(data = AvC_goal_df, aes(x = arenaAdjustedXCord, y = arenaAdjustedYCord), color = "red", size = 5)
+```
+
+```{r heatmap of goals against Avalanch}
+
+# need rows of just shots taken against Colorado and their location
+
+shots_df |> filter(homeTeamCode == "COL" | awayTeamCode == "COL") |>
+  mutate(team == case_when(homeTeamCode == "COL" ~ "COL",
+                           awayTeamCode == "COL" ~ "COL"))
+```
+
+```{r game flow}
+# thought
+# use geom_line to show shots on goal, danger of shots on goal, expected goals, and/or goals -- as the game progresses
+```
+
