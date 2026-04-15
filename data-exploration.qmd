@@ -9,7 +9,7 @@ format:
 ## data prep
 ```{r}
 library(tidyverse)
-library(nhlscraper)  ## hockey data
+library(nhlscraper)  ## hockey data -- some other data from
 library(sportyR) ## visualize regualation playing surfaces for sports
 library(here)
 ```
@@ -17,7 +17,11 @@ library(here)
 ```{r grab game data}
 ## canucks April 1st upset of the Avs
 
-pbps <- gc_pbps(season = 20252026)
+# pbps <- gc_pbps(season = 20252026)
+
+# saveRDS(pbps, file = "2025season.rds")
+
+pbps <- readRDS(here("data/2025season.rds"))
 
 pbps |> filter(typeDescKey == "goal")
 ```
@@ -35,20 +39,63 @@ avs_vs_canucks <- shots_df |> filter(awayTeamCode == "VAN") |> filter(homeTeamCo
 avs_vs_canucks
 AvC_goal_df <- avs_vs_canucks |> filter(event == "GOAL")
 
-
-## need to color by scoring team
 geom_hockey("nhl") +
-  geom_point(data = avs_vs_canucks, aes(x = arenaAdjustedXCord, y = arenaAdjustedYCord)) +
-  geom_point(data = AvC_goal_df, aes(x = arenaAdjustedXCord, y = arenaAdjustedYCord), color = "red", size = 5)
+  geom_point(data = avs_vs_canucks |> filter(period == 1), 
+             aes(x = arenaAdjustedXCord,
+                 y = arenaAdjustedYCord)) +
+  geom_point(data = AvC_goal_df |> filter(period == 1),
+             aes(x = arenaAdjustedXCord,
+                 y = arenaAdjustedYCord,
+                 color = teamCode),
+             size = 5)
+
+
+plot_df <- pbps |> filter(gameId == 2025020020) |>
+               filter(!is.na(shotType)) |> filter(period == 1) # |>
+  mutate(angle = case_when((period == 1 | 3) & (isHome == TRUE) ~  angle + 180,
+                           (period == 2) & (isHome == FALSE) ~ angle + 180,
+                           (period == 2) & (isHome == TRUE) ~ angle,
+                           TRUE ~ angle)
+         )
+# 2, 3, 5, 6 all pointing wrong
+# why?
+#
+pbps |> group_by(reason) |> summarise(n = n()) |> arrange(desc(n)) |> print(n = 60)
+pbps |> filter(gameId = 2024020001) |> filter(reason == "")
+
+
+geom_hockey("nhl") + ## random gameId
+  
+  geom_point(data = 
+               plot_df, aes(x = xCoord, y = yCoord, color = isHome)) +
+  
+  geom_spoke(data = plot_df, 
+             aes(x = xCoord, y = yCoord, angle = angle * (pi / 180), radius = distance, color = isHome)) +
+  
+  geom_spoke(data = plot_df |> filter(scoringPlayerTotal > 0),
+             aes(x = xCoord, y = yCoord, angle = angle * (pi / 180), radius = distance),
+             color = "red", linewidth = 2) +
+  
+  geom_point(data = plot_df |> filter(scoringPlayerTotal > 0), 
+             aes(x = xCoord, y = yCoord),
+             color = "red", size = 4)
+
+## convert deg to radians and draw a line from the shot position in the angle they shot at
 ```
 
 ```{r heatmap of goals against Avalanch}
 
+
+
 # need rows of just shots taken against Colorado and their location
 
-shots_df |> filter(homeTeamCode == "COL" | awayTeamCode == "COL") |>
+heatmap_df <- shots_df |> filter(homeTeamCode == "COL" | awayTeamCode == "COL") |>
   mutate(team == case_when(homeTeamCode == "COL" ~ "COL",
-                           awayTeamCode == "COL" ~ "COL"))
+                           awayTeamCode == "COL" ~ "COL")) |>
+  filter(event == "GOAL" | event == "SHOT") |> mutate(shot_results_in_goal = case_when(event == "GOAL" ~ 1,
+                                                                        TRUE ~ 0))
+
+ggplot(heatmap_df, aes(x = xCoord))
 ```
 
 ```{r game flow}
