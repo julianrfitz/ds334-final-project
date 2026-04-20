@@ -23,23 +23,23 @@ library(here)
 
 pbps <- readRDS(here("data/2025season.rds"))
 
-pbps |> filter(typeDescKey == "goal") |> head()
+# pbps |> filter(typeDescKey == "goal") |> head()
 ```
 
 ```{r grab shot data}
 ## shot data from moneypuck.com
 shots_df <- read_csv(here("data/shots_2025.csv"))
-shots_df |> select(awayTeamCode) |> unique()
+# shots_df |> select(awayTeamCode) |> unique()
 
 ## moneypuck data for canucks april 1st upset against the avalanch
 avs_vs_canucks <- shots_df |> filter(awayTeamCode == "VAN") |> filter(homeTeamCode == "COL") |> filter(game_id == 21188)
 ```
 
 ```{r goal locations}
-head(avs_vs_canucks)
+# head(avs_vs_canucks)
 AvC_goal_df <- avs_vs_canucks |> filter(event == "GOAL")
 
-geom_hockey("nhl") +
+geom_hockey("nhl") + 
   geom_point(data = avs_vs_canucks |> filter(period == 1), 
              aes(x = arenaAdjustedXCord,
                  y = arenaAdjustedYCord)) +
@@ -50,22 +50,22 @@ geom_hockey("nhl") +
              size = 5)
 
 
-pbps |> group_by(reason) |> summarise(n = n()) |> arrange(desc(n)) |> head()
-pbps |> filter(gameId == 2025020020) |> filter(reason == "") |> head()
+# pbps |> group_by(reason) |> summarise(n = n()) |> arrange(desc(n)) |> head()
+# pbps |> filter(gameId == 2025020020) |> filter(reason == "") |> head()
 
 
 
-pbps |> filter(gameId == 2025020020) |> nrow()
-pbps |> filter(gameId == 2025020020, !is.na(shotType)) |> nrow()
-pbps |> filter(gameId == 2025020020, !is.na(shotType), period == 1) |> nrow()
-pbps |> filter(gameId == 2025020020, !is.na(shotType), period == 1, typeDescKey == "goal") |> nrow()
+# pbps |> filter(gameId == 2025020020) |> nrow()
+# pbps |> filter(gameId == 2025020020, !is.na(shotType)) |> nrow()
+# pbps |> filter(gameId == 2025020020, !is.na(shotType), period == 1) |> nrow()
+# pbps |> filter(gameId == 2025020020, !is.na(shotType), period == 1, typeDescKey == "goal") |> nrow()
 
 
 
 ### IGNORES SPORTYR RINK COORDS
 plot_df <- pbps |>
   filter(
-    gameId == 2025020020,
+    #gameId %in% c(2025020020,2025020021, 2025020022),
     !is.na(shotType),
     period %in% c(1, 2, 3),
     typeDescKey %in% c("shot-on-goal", "goal")
@@ -94,23 +94,64 @@ plot_df <- pbps |>
     radius_rink = sqrt(dx^2 + dy^2)
   )
 
-geom_hockey("nhl") +
-  geom_point(
-    data = plot_df,
-    aes(x = xCoord, y = yCoord, color = isHome)
-  ) +
-  geom_spoke(
-    data = plot_df,
-    aes(
-      x = xCoord,
-      y = yCoord,
-      angle = angle_rink,
-      radius = radius_rink,
-      color = isHome
-    )
-  ) +
-  facet_wrap(~ period)
+
+library(plotly)
+plot_df |> mutate(attack_code = case_when(
+  isHome == TRUE ~ TRUE))
+
+## ai used to alter previous plot setup - claude sonnet 4.6
+## why: unable to add global aesthetics to geom_hockey() preventing propper use of plotly
+p1 <- geom_hockey("nhl") +   # swap in your data
+  plot_df +
+  aes(x = xCoord, y = yCoord, color = isHome) +   # removed from each geom - changed by 
+  geom_point(aes(shotType = shotType, strengthState = strengthState)) +
+  geom_spoke(aes(angle = angle_rink, radius = radius_rink)) +
+  facet_wrap(~ period) +
+  theme_void()
+
+ggplotly(p1, tooltip = c("shotType", "strengthState"))
 ## convert deg to radians and draw a line from the shot position in the angle they shot at
+```
+
+```{r shiny app}
+
+unique_gameId <- unique(pbps$gameId)
+
+library(shiny)
+
+ui <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("gameId_sel",
+                  label = "Select a game Id: ",
+                  choices = unique_gameId
+                  ),
+      
+      
+    ),
+    mainPanel(
+      plotlyOutput(outputId = "shot_map")
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  
+  output$shot_map <- renderPlot({
+    
+    df_game <- plot_df |> filter(gameId == input$gameId_sel)
+    
+    geom_hockey("nhl") +
+      df_game +
+      aes(x = xCoord, y = yCoord, color = isHome) +
+      geom_point(aes(shotType = shotType, strengthState = strengthState)) +
+      geom_spoke(aes(angle = angle_rink, radius = radius_rink)) +
+      facet_wrap(~ period) +
+      theme_minimal(base_size = 22)
+  })
+}
+
+shinyApp(ui, server)
 ```
 
 ```{r heatmap of goals against Avalanch}
