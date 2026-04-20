@@ -23,7 +23,7 @@ library(here)
 
 pbps <- readRDS(here("data/2025season.rds"))
 
-pbps |> filter(typeDescKey == "goal")
+pbps |> filter(typeDescKey == "goal") |> head()
 ```
 
 ```{r grab shot data}
@@ -36,7 +36,7 @@ avs_vs_canucks <- shots_df |> filter(awayTeamCode == "VAN") |> filter(homeTeamCo
 ```
 
 ```{r goal locations}
-avs_vs_canucks
+head(avs_vs_canucks)
 AvC_goal_df <- avs_vs_canucks |> filter(event == "GOAL")
 
 geom_hockey("nhl") +
@@ -50,36 +50,66 @@ geom_hockey("nhl") +
              size = 5)
 
 
-plot_df <- pbps |> filter(gameId == 2025020020) |>
-               filter(!is.na(shotType)) |> filter(period == 1) # |>
-  mutate(angle = case_when((period == 1 | 3) & (isHome == TRUE) ~  angle + 180,
-                           (period == 2) & (isHome == FALSE) ~ angle + 180,
-                           (period == 2) & (isHome == TRUE) ~ angle,
-                           TRUE ~ angle)
-         )
-# 2, 3, 5, 6 all pointing wrong
-# why?
-#
-pbps |> group_by(reason) |> summarise(n = n()) |> arrange(desc(n)) |> print(n = 60)
-pbps |> filter(gameId = 2024020001) |> filter(reason == "")
+pbps |> group_by(reason) |> summarise(n = n()) |> arrange(desc(n)) |> head()
+pbps |> filter(gameId == 2025020020) |> filter(reason == "") |> head()
 
 
-geom_hockey("nhl") + ## random gameId
-  
-  geom_point(data = 
-               plot_df, aes(x = xCoord, y = yCoord, color = isHome)) +
-  
-  geom_spoke(data = plot_df, 
-             aes(x = xCoord, y = yCoord, angle = angle * (pi / 180), radius = distance, color = isHome)) +
-  
-  geom_spoke(data = plot_df |> filter(scoringPlayerTotal > 0),
-             aes(x = xCoord, y = yCoord, angle = angle * (pi / 180), radius = distance),
-             color = "red", linewidth = 2) +
-  
-  geom_point(data = plot_df |> filter(scoringPlayerTotal > 0), 
-             aes(x = xCoord, y = yCoord),
-             color = "red", size = 4)
 
+pbps |> filter(gameId == 2025020020) |> nrow()
+pbps |> filter(gameId == 2025020020, !is.na(shotType)) |> nrow()
+pbps |> filter(gameId == 2025020020, !is.na(shotType), period == 1) |> nrow()
+pbps |> filter(gameId == 2025020020, !is.na(shotType), period == 1, typeDescKey == "goal") |> nrow()
+
+
+
+### IGNORES SPORTYR RINK COORDS
+plot_df <- pbps |>
+  filter(
+    gameId == 2025020020,
+    !is.na(shotType),
+    period %in% c(1, 2, 3),
+    typeDescKey %in% c("shot-on-goal", "goal")
+  ) |>
+  # which side is each team attacking TIHS period?
+  mutate(
+    # side where HOME is defending this period -  "left" or "right"
+    home_def_side = homeTeamDefendingSide,
+    
+    # for each event, which side is the shooting team attacking?
+    shooting_attacks_side = case_when(
+      isHome & home_def_side == "right" ~ "left",
+      isHome & home_def_side == "left"  ~ "right",
+      !isHome & home_def_side == "right" ~ "right",
+      !isHome & home_def_side == "left"  ~ "left",
+      TRUE ~ "right"
+    ),
+
+    net_x = if_else(shooting_attacks_side == "right", 89, -89),
+    net_y = 0,
+
+    dx = net_x - xCoord,
+    dy = net_y - yCoord,
+
+    angle_rink = atan2(dy, dx), # radians
+    radius_rink = sqrt(dx^2 + dy^2)
+  )
+
+geom_hockey("nhl") +
+  geom_point(
+    data = plot_df,
+    aes(x = xCoord, y = yCoord, color = isHome)
+  ) +
+  geom_spoke(
+    data = plot_df,
+    aes(
+      x = xCoord,
+      y = yCoord,
+      angle = angle_rink,
+      radius = radius_rink,
+      color = isHome
+    )
+  ) +
+  facet_wrap(~ period)
 ## convert deg to radians and draw a line from the shot position in the angle they shot at
 ```
 
@@ -89,13 +119,19 @@ geom_hockey("nhl") + ## random gameId
 
 # need rows of just shots taken against Colorado and their location
 
-heatmap_df <- shots_df |> filter(homeTeamCode == "COL" | awayTeamCode == "COL") |>
-  mutate(team == case_when(homeTeamCode == "COL" ~ "COL",
-                           awayTeamCode == "COL" ~ "COL")) |>
-  filter(event == "GOAL" | event == "SHOT") |> mutate(shot_results_in_goal = case_when(event == "GOAL" ~ 1,
-                                                                        TRUE ~ 0))
+heatmap_df <- shots_df |>
+  filter(homeTeamCode == "COL" | awayTeamCode == "COL") |>
+  filter(event %in% c("GOAL", "SHOT")) |>
+  mutate(
+    opponent = case_when(
+      homeTeamCode == "COL" ~ awayTeamCode,
+      awayTeamCode == "COL" ~ homeTeamCode
+    ),
+    shot_results_in_goal = if_else(event == "GOAL", 1, 0)
+  )
 
-ggplot(heatmap_df, aes(x = xCoord))
+head(heatmap_df)
+#ggplot(heatmap_df, aes(x = xCoord))
 ```
 
 ```{r game flow}
