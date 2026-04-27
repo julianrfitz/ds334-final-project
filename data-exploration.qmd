@@ -4,14 +4,17 @@ author: "Julian Fitz"
 format: 
   html:
     embed-resources: true
+    echo: false
 ---
 
 ## data prep
 ```{r}
+#| include: false
 library(tidyverse)
 library(nhlscraper)  ## hockey data -- some other data from
 library(sportyR) ## visualize regualation playing surfaces for sports
 library(here)
+library(shiny)
 ```
 
 ```{r grab game data}
@@ -112,8 +115,6 @@ p1 <- geom_hockey("nhl") +   # swap in your data
 
 unique_gameId <- unique(pbps$gameId)
 
-library(shiny)
-
 ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
@@ -121,28 +122,80 @@ ui <- fluidPage(
                   label = "Select a game Id: ",
                   choices = unique_gameId
                   ),
-      
-      
+      checkboxGroupInput("period_sel",
+                         label = "Select Game Period(s)",
+                         choices = c(1, 2, 3),
+                         selected = c(1, 2, 3)
+      )
     ),
     mainPanel(
-      plotlyOutput(outputId = "shot_map")
+      plotlyOutput(outputId = "shot_map"),
+      plotOutput(outputId = "heat_map")
     )
   )
 )
 
 server <- function(input, output, session) {
   
+  df_game_selected <- reactive({
+    plot_df |>
+      filter(gameId == input$gameId_sel)
+  })
+  
+  df_period_selected <- reactive({df_game_selected() |>
+      filter(period == input$period_sel)})
+  
+  df_heatmap <- reactive({shots_df |>
+      filter(gameId == input$gameId_sel) |>
+      filter(period == input$period_sel) |>
+  filter(homeTeamCode == "COL" | awayTeamCode == "COL") |>
+  filter(event %in% c("GOAL", "SHOT")) |>
+  mutate(
+    opponent = if_else(
+      homeTeamCode == "COL",
+      awayTeamCode,
+      homeTeamCode
+    ),
+    shot_results_in_goal = if_else(event == "GOAL", 1L, 0L)
+  ) |>
+  filter(
+    !is.na(arenaAdjustedXCord),
+    !is.na(arenaAdjustedYCord)
+  )
+  })
+  
   output$shot_map <- renderPlotly({
     
-    df_game <- plot_df |> filter(gameId == input$gameId_sel)
-    
     geom_hockey("nhl") +
-      df_game +
+      df_period_selected() +
       aes(x = xCoord, y = yCoord, color = isHome) +
       geom_point(aes(shotType = shotType, strengthState = strengthState)) +
       geom_spoke(aes(angle = angle_rink, radius = radius_rink)) +
-      facet_wrap(~ period) +
       theme_minimal(base_size = 22)
+  })
+  
+  output$heat_map <- renderPlot({
+    
+    geom_hockey(league = "NHL", display_range = "ozone") +
+  stat_density_2d_filled(
+    data = df_heatmap(),
+    aes(
+      x = arenaAdjustedXCord,
+      y = arenaAdjustedYCord,
+      fill = after_stat(level)
+    ),
+    contour_var = "density",
+    alpha = 0.75
+  ) +
+  coord_equal(xlim = c(25, 100), ylim = c(-42.5, 42.5)) +
+  scale_fill_viridis_d(direction = 1) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Shot density against Colorado",
+    subtitle = "All SHOT and GOAL events by opponents",
+    fill = "Density"
+  )
+    
   })
 }
 
@@ -166,7 +219,7 @@ heatmap_df <- shots_df |>
     !is.na(arenaAdjustedYCord)
   )
 
-shots_df |> colnames()
+# shots_df |> colnames()
 
 geom_hockey(league = "NHL", display_range = "ozone") +
   stat_density_2d_filled(
@@ -187,7 +240,17 @@ geom_hockey(league = "NHL", display_range = "ozone") +
     subtitle = "All SHOT and GOAL events by opponents",
     fill = "Density"
   )
+
 ```
+
+```{r}
+## shot type bar plot
+## !!! game id in pbps does not match game id in shots_df!!!!
+
+ggplot(shots_df |> filter(game_id == 20001), aes(x = event)) +
+  geom_bar()
+```
+
 
 ```{r game flow}
 # thought
