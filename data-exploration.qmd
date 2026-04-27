@@ -65,39 +65,34 @@ geom_hockey("nhl") +
 ### IGNORES SPORTYR RINK COORDS
 plot_df <- pbps |>
   filter(
-    #gameId %in% c(2025020020,2025020021, 2025020022),
     !is.na(shotType),
     period %in% c(1, 2, 3),
     typeDescKey %in% c("shot-on-goal", "goal")
   ) |>
-  # which side is each team attacking TIHS period?
   mutate(
-    # side where HOME is defending this period -  "left" or "right"
     home_def_side = homeTeamDefendingSide,
-    
-    # for each event, which side is the shooting team attacking?
     shooting_attacks_side = case_when(
       isHome & home_def_side == "right" ~ "left",
       isHome & home_def_side == "left"  ~ "right",
       !isHome & home_def_side == "right" ~ "right",
-      !isHome & home_def_side == "left"  ~ "left",
+      !isHome & home_def_side == "left" ~ "left",
       TRUE ~ "right"
     ),
-
     net_x = if_else(shooting_attacks_side == "right", 89, -89),
     net_y = 0,
-
     dx = net_x - xCoord,
     dy = net_y - yCoord,
-
-    angle_rink = atan2(dy, dx), # radians
-    radius_rink = sqrt(dx^2 + dy^2)
+    angle_rink = atan2(dy, dx),
+    radius_rink = sqrt(dx^2 + dy^2),
+    gameId = as.character(gameId)
   )
 
 
 library(plotly)
-plot_df |> mutate(attack_code = case_when(
-  isHome == TRUE ~ TRUE))
+# plot_df |> mutate(attack_code = case_when(
+#  isHome == TRUE ~ TRUE))
+
+
 
 ## ai used to alter previous plot setup - claude sonnet 4.6
 ## why: unable to add global aesthetics to geom_hockey() preventing propper use of plotly
@@ -109,7 +104,7 @@ p1 <- geom_hockey("nhl") +   # swap in your data
   facet_wrap(~ period) +
   theme_void()
 
-ggplotly(p1, tooltip = c("shotType", "strengthState"))
+# ggplotly(p1, tooltip = c("shotType", "strengthState"))
 ## convert deg to radians and draw a line from the shot position in the angle they shot at
 ```
 
@@ -137,7 +132,7 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   
-  output$shot_map <- renderPlot({
+  output$shot_map <- renderPlotly({
     
     df_game <- plot_df |> filter(gameId == input$gameId_sel)
     
@@ -155,28 +150,49 @@ shinyApp(ui, server)
 ```
 
 ```{r heatmap of goals against Avalanch}
-
-
-
-# need rows of just shots taken against Colorado and their location
-
 heatmap_df <- shots_df |>
   filter(homeTeamCode == "COL" | awayTeamCode == "COL") |>
   filter(event %in% c("GOAL", "SHOT")) |>
   mutate(
-    opponent = case_when(
-      homeTeamCode == "COL" ~ awayTeamCode,
-      awayTeamCode == "COL" ~ homeTeamCode
+    opponent = if_else(
+      homeTeamCode == "COL",
+      awayTeamCode,
+      homeTeamCode
     ),
-    shot_results_in_goal = if_else(event == "GOAL", 1, 0)
+    shot_results_in_goal = if_else(event == "GOAL", 1L, 0L)
+  ) |>
+  filter(
+    !is.na(arenaAdjustedXCord),
+    !is.na(arenaAdjustedYCord)
   )
 
-head(heatmap_df)
-#ggplot(heatmap_df, aes(x = xCoord))
+shots_df |> colnames()
+
+geom_hockey(league = "NHL", display_range = "ozone") +
+  stat_density_2d_filled(
+    data = heatmap_df,
+    aes(
+      x = arenaAdjustedXCord,
+      y = arenaAdjustedYCord,
+      fill = after_stat(level)
+    ),
+    contour_var = "density",
+    alpha = 0.75
+  ) +
+  coord_equal(xlim = c(25, 100), ylim = c(-42.5, 42.5)) +
+  scale_fill_viridis_d(direction = 1) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Shot density against Colorado",
+    subtitle = "All SHOT and GOAL events by opponents",
+    fill = "Density"
+  )
 ```
 
 ```{r game flow}
 # thought
 # use geom_line to show shots on goal, danger of shots on goal, expected goals, and/or goals -- as the game progresses
 ```
+
+
 
