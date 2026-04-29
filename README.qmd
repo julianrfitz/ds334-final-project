@@ -1,0 +1,167 @@
+---
+title: "Hockey Shot Analysis"
+format: gfm
+---
+```{r}
+#| output: false
+#| echo: false
+
+library(tidyverse)
+library(sportyR)
+library(here)
+
+shots_df <- read_csv(here("data/shots_2025.csv"), show_col_types = FALSE)
+
+period_labels <- c(
+  "1" = "Period 1\nVAN 3 - COL 2",
+  "2" = "Period 2\nVAN 6 - COL 3",
+  "3" = "Period 3\nFinal: VAN 8 - COL 6"
+)
+
+avs_vs_canucks <- shots_df |>
+  filter(
+    homeTeamCode == "COL",
+    awayTeamCode == "VAN",
+    game_id == 21188,
+    period %in% c(1, 2, 3),
+    event %in% c("SHOT", "GOAL")
+  ) |>
+  mutate(
+    team_label = case_when(
+      teamCode == "COL" ~ "Colorado",
+      teamCode == "VAN" ~ "Vancouver",
+      TRUE ~ teamCode
+    ),
+    event_label = case_when(
+      event == "GOAL" ~ "Goal",
+      event == "SHOT" ~ "Shot",
+      TRUE ~ event
+    ),
+    period_lab = factor(
+      as.character(period),
+      levels = c("1", "2", "3"),
+      labels = period_labels
+    )
+  ) |>
+  filter(
+    !is.na(arenaAdjustedXCord),
+    !is.na(arenaAdjustedYCord)
+  )
+
+goal_df <- avs_vs_canucks |>
+  filter(event == "GOAL")
+```
+
+## Data Introduction
+
+- This project uses NHL play-by-play data from the 2025-2026 regular season.
+
+- Each event includes information such as game ID, period, shot type, team context, and rink coordinates.
+
+- Because the data include shot location, we can study where offenses generated chances on the ice.
+
+- I included only shot-on-goal and goal events, and removed rows with missing shot type values.
+
+## Questions of Interest
+
+- How did shot location differ between the home and away teams in this game?
+
+- Did shot patterns change from period to period as the game progressed?
+
+```{r}
+#| echo: false
+team_colors <- c(
+  "Colorado" = "#6F263D",
+  "Vancouver" = "#00843D"
+)
+
+
+geom_hockey(league = "NHL") +
+  geom_point(
+    data = avs_vs_canucks,
+    aes(
+      x = arenaAdjustedXCord,
+      y = arenaAdjustedYCord,
+      color = team_label
+    ),
+    alpha = 0.75,
+    size = 2.8
+  ) +
+  facet_wrap(~ period_lab) +
+  scale_color_manual(values = team_colors) +
+  labs(
+    title = "Shots taken by each team",
+    caption = "Vancouver at Colorado, Apr. 1, 2026",
+    color = "Team"
+  ) +
+  theme_void(base_size = 18) +
+  theme(
+    plot.title = element_text(face = "bold", size = 22),
+    plot.subtitle = element_text(size = 14),
+    strip.text = element_text(face = "bold", size = 15),
+    legend.position = "bottom"
+  )
+```
+
+```{r}
+#| echo: false
+geom_hockey(league = "NHL") +
+  geom_point(
+    data = avs_vs_canucks,
+    aes(x = arenaAdjustedXCord, y = arenaAdjustedYCord),
+    color = "gray75",
+    alpha = 0.45,
+    size = 2
+  ) +
+  geom_point(
+    data = goal_df,
+    aes(
+      x = arenaAdjustedXCord,
+      y = arenaAdjustedYCord,
+      color = team_label
+    ),
+    size = 4.5
+  ) +
+  facet_wrap(~ period_lab) +
+  scale_color_manual(values = team_colors) +
+  labs(
+    title = "Goals highlighted over all shots",
+    caption = "Vancouver at Colorado, Apr. 1, 2026",
+    color = "Team"
+  ) +
+  theme_void(base_size = 18) +
+  theme(
+    plot.title = element_text(face = "bold", size = 22),
+    plot.subtitle = element_text(size = 14),
+    strip.text = element_text(face = "bold", size = 15),
+    legend.position = "bottom"
+  )
+```
+
+
+```{r}
+#| echo: false
+#| message: false
+avs_vs_canucks |>
+  count(period_lab, team_label, event_label) |>
+  ggplot(aes(x = period_lab, y = n, fill = event_label)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ team_label) +
+  scale_fill_manual(values = c("Shot" = "#9ecae1", "Goal" = "#f28e2b")) +
+  theme_minimal(base_size = 18) +
+  labs(
+    title = "Shot events by period",
+    caption = "Vancouver at Colorado, Apr. 1, 2026",
+    color = "Team",
+    x = NULL,
+    y = "Events",
+    fill = "Event Type"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", size = 22),
+    plot.subtitle = element_text(size = 14),
+    strip.text = element_text(face = "bold", size = 16),
+    axis.text.x = element_text(size = 11),
+    legend.position = "bottom"
+  )
+```
