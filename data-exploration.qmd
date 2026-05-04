@@ -1,15 +1,17 @@
 ---
-title: "data-exploration"
+title: "Hockey Shot Analysis"
 author: "Julian Fitz"
 format: 
   html:
     embed-resources: true
     echo: false
+    execute: false
 ---
 
 ## data prep
 ```{r}
 #| include: false
+#| execute: true
 library(tidyverse)
 library(nhlscraper)  ## hockey data -- some other data from
 library(sportyR) ## visualize regualation playing surfaces for sports
@@ -18,6 +20,7 @@ library(shiny)
 ```
 
 ```{r grab game data}
+#| execute: true
 ## canucks April 1st upset of the Avs
 
 # pbps <- gc_pbps(season = 20252026)
@@ -30,6 +33,7 @@ pbps <- readRDS(here("data/2025season.rds"))
 ```
 
 ```{r grab shot data}
+#| execute: true
 ## shot data from moneypuck.com
 shots_df <- read_csv(here("data/shots_2025.csv"))
 # shots_df |> select(awayTeamCode) |> unique()
@@ -62,9 +66,9 @@ geom_hockey("nhl") +
 # pbps |> filter(gameId == 2025020020, !is.na(shotType)) |> nrow()
 # pbps |> filter(gameId == 2025020020, !is.na(shotType), period == 1) |> nrow()
 # pbps |> filter(gameId == 2025020020, !is.na(shotType), period == 1, typeDescKey == "goal") |> nrow()
+```
 
-
-
+```{r plot_df}
 ### IGNORES SPORTYR RINK COORDS
 plot_df <- pbps |>
   filter(
@@ -99,83 +103,139 @@ library(plotly)
 
 ## ai used to alter previous plot setup - claude sonnet 4.6
 ## why: unable to add global aesthetics to geom_hockey() preventing propper use of plotly
-p1 <- geom_hockey("nhl") +   # swap in your data
-  plot_df +
-  aes(x = xCoord, y = yCoord, color = isHome) +   # removed from each geom - changed by 
-  geom_point(aes(shotType = shotType, strengthState = strengthState)) +
-  geom_spoke(aes(angle = angle_rink, radius = radius_rink)) +
-  facet_wrap(~ period) +
-  theme_void()
+#p1 <- geom_hockey("nhl") +   # swap in your data
+#  plot_df +
+#  aes(x = xCoord, y = yCoord, color = isHome) +   # removed from each geom - changed by 
+#  geom_point(aes(shotType = shotType, strengthState = strengthState)) +
+#  geom_spoke(aes(angle = angle_rink, radius = radius_rink)) +
+#  facet_wrap(~ period) +
+#  theme_void()
 
 # ggplotly(p1, tooltip = c("shotType", "strengthState"))
 ## convert deg to radians and draw a line from the shot position in the angle they shot at
 ```
 
+## shiny app
 ```{r shiny app}
+#| execute: true
 
-unique_gameId <- unique(pbps$gameId)
+game_lookup <- shots_df |>
+  distinct(game_id, homeTeamCode, awayTeamCode) |>
+  mutate(pbps_game_id = as.integer(game_id + 2025000000)) |>
+  arrange(game_id)
+
+all_teams <- sort(unique(c(game_lookup$homeTeamCode, game_lookup$awayTeamCode)))
 
 ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
+      selectInput("home_team",
+                  label = "Home Team",
+                  choices = all_teams
+      ),
+      selectInput("away_team",
+                  label = "Away Team",
+                  choices = NULL
+      ),
       selectInput("gameId_sel",
-                  label = "Select a game Id: ",
-                  choices = unique_gameId
-                  ),
+                  label = "Select Game",
+                  choices = NULL
+      ),
       checkboxGroupInput("period_sel",
                          label = "Select Game Period(s)",
                          choices = c(1, 2, 3),
                          selected = c(1, 2, 3)
+      ),
+      checkboxGroupInput("event_sel",
+                         label = "Select Shot Result(s)",
+                         choices = c("GOAL", "SHOT", "MISS"),
+                         selected = c("GOAL", "SHOT", "MISS")
+      ),
+      radioButtons("heatmap_team",
+                   label = "Heatmap: Shots By",
+                   choices = c("Home" = 1, "Away" = 0),
+                   selected = 1
       )
     ),
     mainPanel(
       plotlyOutput(outputId = "shot_map"),
-      plotOutput(outputId = "heat_map")
+      plotOutput(outputId = "heat_map"),
+      plotOutput(outputId = "event_bar")
     )
   )
 )
 
 server <- function(input, output, session) {
+
+  # Update away team choices when home team changes
+  observeEvent(input$home_team, {
+    away_choices <- game_lookup |>
+      filter(homeTeamCode == input$home_team) |>
+      pull(awayTeamCode) |>
+      unique() |>
+      sort()
+    updateSelectInput(session, "away_team", choices = away_choices)
+  })
+
+  # Update game choices when either team changes
+  observeEvent(list(input$home_team, input$away_team), {
+    req(input$home_team, input$away_team) ## AI USED to figure out req() is needed
+    matching <- game_lookup |>
+      filter(homeTeamCode == input$home_team, awayTeamCode == input$away_team)
+    req(nrow(matching) > 0) ## ai used to find req() is needed
+    labels <- if (nrow(matching) > 1) {
+      paste0(input$home_team, " vs ", input$away_team, " (Game ", seq_len(nrow(matching)), ")")
+    } else {
+      paste0(input$home_team, " vs ", input$away_team)
+    }
+    updateSelectInput(session, "gameId_sel", choices = setNames(matching$pbps_game_id, labels))
+  })
+
   
   df_game_selected <- reactive({
     plot_df |>
       filter(gameId == input$gameId_sel)
   })
   
-  df_period_selected <- reactive({df_game_selected() |>
-      filter(period == input$period_sel)})
+  # Map SHOT/GOAL/MISS choices to typeDescKey values used in plot_df
+  event_map <- c("SHOT" = "shot-on-goal", "GOAL" = "goal")
   
-  df_heatmap <- reactive({shots_df |>
-      filter(gameId == input$gameId_sel) |>
-      filter(period == input$period_sel) |>
-  filter(homeTeamCode == "COL" | awayTeamCode == "COL") |>
-  filter(event %in% c("GOAL", "SHOT")) |>
-  mutate(
-    opponent = if_else(
-      homeTeamCode == "COL",
-      awayTeamCode,
-      homeTeamCode
-    ),
-    shot_results_in_goal = if_else(event == "GOAL", 1L, 0L)
-  ) |>
-  filter(
-    !is.na(arenaAdjustedXCord),
-    !is.na(arenaAdjustedYCord)
-  )
+  df_period_selected <- reactive({
+    mapped_events <- event_map[input$event_sel[input$event_sel %in% names(event_map)]]
+    df_game_selected() |>
+      filter(period %in% as.integer(input$period_sel)) |>
+      filter(typeDescKey %in% mapped_events)
+  })
+  
+  # Base reactive: game + period + event filters applied to shots_df
+  df_events <- reactive({
+    shots_df |>
+      filter(game_id == as.integer(input$gameId_sel) - 2025000000) |>
+      filter(period %in% as.numeric(input$period_sel)) |>
+      filter(event %in% input$event_sel)
+  })
+
+  df_heatmap <- reactive({
+    df_events() |>
+      filter(isHomeTeam == as.integer(input$heatmap_team)) |>
+      filter(
+        !is.na(arenaAdjustedXCord),
+        !is.na(arenaAdjustedYCord)
+      )
   })
   
   output$shot_map <- renderPlotly({
-    
+    req(input$gameId_sel) ## ai used to find req() is needed
     geom_hockey("nhl") +
       df_period_selected() +
       aes(x = xCoord, y = yCoord, color = isHome) +
       geom_point(aes(shotType = shotType, strengthState = strengthState)) +
       geom_spoke(aes(angle = angle_rink, radius = radius_rink)) +
-      theme_minimal(base_size = 22)
+      theme_void(base_size = 22)
   })
   
   output$heat_map <- renderPlot({
-    
+    req(input$gameId_sel)
     geom_hockey(league = "NHL", display_range = "ozone") +
   stat_density_2d_filled(
     data = df_heatmap(),
@@ -189,13 +249,47 @@ server <- function(input, output, session) {
   ) +
   coord_equal(xlim = c(25, 100), ylim = c(-42.5, 42.5)) +
   scale_fill_viridis_d(direction = 1) +
-  theme_minimal(base_size = 14) +
+  theme_void(base_size = 22) +
   labs(
-    title = "Shot density against Colorado",
-    subtitle = "All SHOT and GOAL events by opponents",
+    title = paste("Shot density —", if (input$heatmap_team == 1) input$home_team else input$away_team),
+    subtitle = paste("Periods:", paste(input$period_sel, collapse = ", ")),
     fill = "Density"
   )
     
+  })
+
+  
+  ## Posit Assistant used to transfer plot from slide to shiny
+  output$event_bar <- renderPlot({
+    req(input$gameId_sel) ## req() added - ai used to find issue (crash on startup without)
+    df_events() |>
+      mutate(
+        team_label = teamCode,
+        event_label = case_when(
+          event == "GOAL" ~ "Goal",
+          event == "SHOT" ~ "Shot",
+          event == "MISS" ~ "Miss",
+          TRUE ~ event
+        ),
+        period_lab = factor(paste0("Period ", period),
+                            levels = paste0("Period ", sort(unique(period))))
+      ) |>
+      count(period_lab, team_label, event_label) |>
+      ggplot(aes(x = period_lab, y = n, fill = event_label)) +
+      geom_col(position = "dodge") +
+      facet_wrap(~ team_label) +
+      scale_fill_manual(values = c("Shot" = "#9ecae1", "Goal" = "#f28e2b", "Miss" = "#b2b2b2")) +
+      theme_minimal(base_size = 22) +
+      labs(
+        x = NULL,
+        y = "Events",
+        fill = "Event Type"
+      ) +
+      theme(
+        strip.text = element_text(face = "bold", size = 16),
+        axis.text.x = element_text(size = 11),
+        legend.position = "bottom"
+      )
   })
 }
 
